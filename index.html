@@ -1,0 +1,849 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>DEF CON 34 — Room Finder</title>
+<meta name="description" content="Search DEF CON 34 rooms by number, name, or type.">
+<meta name="color-scheme" content="dark light">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><text y='26' font-size='26'>🔎</text></svg>">
+<style>
+  :root {
+    --bg: #0c0f16;
+    --bg-elev: #141926;
+    --bg-elev-2: #1b2233;
+    --line: #26304a;
+    --line-soft: #1d2537;
+    --fg: #e8ecf5;
+    --fg-dim: #97a3bd;
+    --fg-faint: #67718c;
+    --accent: #58a6ff;
+    --focus: #58a6ff;
+
+    /* Category colors sampled from the source PDF's cell fills. */
+    --c-contest: #4d93d9;
+    --c-village: #f7c7ac;
+    --c-stage: #83e28e;
+    --c-goon: #e01414;
+    --c-community: #d86dcd;
+    --c-vendors: #61cbf3;
+    --c-exhibitor: #ffc000;
+
+    --radius: 12px;
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  }
+
+  @media (prefers-color-scheme: light) {
+    :root {
+      --bg: #f4f6fb;
+      --bg-elev: #ffffff;
+      --bg-elev-2: #eef1f8;
+      --line: #d2d9e8;
+      --line-soft: #e3e8f2;
+      --fg: #131824;
+      --fg-dim: #55607a;
+      --fg-faint: #7d879f;
+      --accent: #1b62c9;
+      --focus: #1b62c9;
+      --c-goon: #d40000;
+    }
+  }
+
+  * { box-sizing: border-box; }
+
+  html { -webkit-text-size-adjust: 100%; }
+
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--fg);
+    font: 16px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    padding-bottom: 3rem;
+  }
+
+  .wrap {
+    max-width: 1160px;
+    margin: 0 auto;
+    padding: 0 clamp(0.75rem, 3vw, 1.5rem);
+  }
+
+  /* ---------- header + controls ---------- */
+
+  header {
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    background: color-mix(in srgb, var(--bg) 92%, transparent);
+    backdrop-filter: blur(12px);
+    border-bottom: 1px solid var(--line-soft);
+    padding-top: max(0.9rem, env(safe-area-inset-top));
+    padding-bottom: 0.75rem;
+  }
+
+  .title {
+    display: flex;
+    align-items: baseline;
+    gap: 0.6rem;
+    flex-wrap: wrap;
+    margin-bottom: 0.7rem;
+  }
+
+  h1 {
+    font-size: clamp(1.05rem, 3.4vw, 1.3rem);
+    margin: 0;
+    letter-spacing: -0.01em;
+  }
+
+  h1 .dc { color: var(--accent); }
+
+  .title .sub {
+    font-size: 0.8rem;
+    color: var(--fg-faint);
+  }
+
+  .searchbox { position: relative; }
+
+  .searchbox svg {
+    position: absolute;
+    left: 0.85rem;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 1.05rem;
+    height: 1.05rem;
+    color: var(--fg-faint);
+    pointer-events: none;
+  }
+
+  #q {
+    width: 100%;
+    font: inherit;
+    font-size: 1.05rem;
+    color: var(--fg);
+    background: var(--bg-elev);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    padding: 0.72rem 2.6rem 0.72rem 2.6rem;
+    -webkit-appearance: none;
+    appearance: none;
+  }
+
+  #q::-webkit-search-cancel-button { display: none; }
+  #q::placeholder { color: var(--fg-faint); }
+
+  #q:focus-visible,
+  .chip:focus-visible,
+  #clear:focus-visible,
+  summary:focus-visible {
+    outline: 2px solid var(--focus);
+    outline-offset: 2px;
+  }
+
+  #clear {
+    position: absolute;
+    right: 0.5rem;
+    top: 50%;
+    transform: translateY(-50%);
+    background: var(--bg-elev-2);
+    border: 1px solid var(--line);
+    color: var(--fg-dim);
+    border-radius: 8px;
+    width: 1.8rem;
+    height: 1.8rem;
+    font-size: 1rem;
+    line-height: 1;
+    cursor: pointer;
+    display: none;
+    padding: 0;
+  }
+
+  #clear.on { display: block; }
+
+  .filters {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+    margin-top: 0.7rem;
+    align-items: center;
+  }
+
+  .flabel {
+    font-size: 0.72rem;
+    letter-spacing: 0.07em;
+    text-transform: uppercase;
+    color: var(--fg-faint);
+    margin-right: 0.15rem;
+  }
+
+  .chip {
+    font: inherit;
+    font-size: 0.82rem;
+    line-height: 1;
+    padding: 0.42rem 0.7rem;
+    border-radius: 999px;
+    border: 1px solid var(--line);
+    background: var(--bg-elev);
+    color: var(--fg-dim);
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    white-space: nowrap;
+  }
+
+  .chip:hover { border-color: var(--fg-faint); color: var(--fg); }
+
+  .chip .dot {
+    width: 0.6rem;
+    height: 0.6rem;
+    border-radius: 50%;
+    background: var(--chip-color, var(--fg-faint));
+    flex: none;
+  }
+
+  .chip .n {
+    font-size: 0.72rem;
+    color: var(--fg-faint);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .chip[aria-pressed="true"] {
+    background: var(--chip-color, var(--accent));
+    border-color: var(--chip-color, var(--accent));
+    color: #0b0e14;
+    font-weight: 600;
+  }
+
+  .chip[aria-pressed="true"] .n { color: #0b0e14; opacity: 0.65; }
+  .chip[aria-pressed="true"] .dot { display: none; }
+  .chip.goon[aria-pressed="true"] { color: #fff; }
+  .chip.goon[aria-pressed="true"] .n { color: #fff; }
+
+  /* ---------- results ---------- */
+
+  .status {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 1rem;
+    margin: 1.1rem 0 0.6rem;
+    font-size: 0.85rem;
+    color: var(--fg-dim);
+  }
+
+  .status .hint {
+    color: var(--fg-faint);
+    font-size: 0.78rem;
+  }
+
+  .status kbd {
+    font: inherit;
+    font-family: var(--mono);
+    font-size: 0.72rem;
+    background: var(--bg-elev-2);
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    padding: 0.05rem 0.3rem;
+  }
+
+  #results {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(330px, 1fr));
+    gap: 0.6rem;
+    list-style: none;
+    margin: 0;
+    padding: 0;
+  }
+
+  @media (max-width: 420px) {
+    #results { grid-template-columns: 1fr; }
+  }
+
+  /* On a phone the chips would otherwise wrap to five rows and pin most of
+     the screen under the sticky header, so scroll them sideways instead. */
+  @media (max-width: 640px) {
+    .filters {
+      flex-wrap: nowrap;
+      overflow-x: auto;
+      scrollbar-width: none;
+      -webkit-overflow-scrolling: touch;
+      padding-bottom: 0.15rem;
+    }
+    .filters::-webkit-scrollbar { display: none; }
+    /* Opaque, so chips scroll behind the label instead of through it. */
+    .flabel {
+      position: sticky;
+      left: 0;
+      background: var(--bg);
+      padding-right: 0.45rem;
+      z-index: 1;
+    }
+    .status .hint { display: none; }
+  }
+
+  .card {
+    display: grid;
+    grid-template-columns: 5.1rem 1fr;
+    background: var(--bg-elev);
+    border: 1px solid var(--line-soft);
+    border-left: 4px solid var(--cat, var(--line));
+    border-radius: var(--radius);
+    overflow: hidden;
+  }
+
+  .card .room {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 0.15rem;
+    padding: 0.7rem 0.35rem;
+    background: var(--bg-elev-2);
+    border-right: 1px solid var(--line-soft);
+  }
+
+  .card .num {
+    font-family: var(--mono);
+    font-size: 1.22rem;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    line-height: 1.1;
+    text-align: center;
+  }
+
+  .card .fl {
+    font-size: 0.63rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--fg-faint);
+    white-space: nowrap;
+  }
+
+  .card .body {
+    padding: 0.65rem 0.8rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+    min-width: 0;
+  }
+
+  .card .name {
+    font-size: 1rem;
+    font-weight: 600;
+    line-height: 1.3;
+    overflow-wrap: anywhere;
+  }
+
+  .card .name.unlisted {
+    font-weight: 400;
+    font-style: italic;
+    color: var(--fg-faint);
+  }
+
+  .card .meta {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.4rem;
+  }
+
+  .badge {
+    font-size: 0.7rem;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    padding: 0.2rem 0.5rem;
+    border-radius: 5px;
+    background: var(--cat);
+    color: #0b0e14;
+    white-space: nowrap;
+  }
+
+  .badge.goon { color: #fff; }
+
+  .also {
+    font-size: 0.76rem;
+    color: var(--fg-faint);
+    line-height: 1.45;
+  }
+
+  .also b {
+    font-family: var(--mono);
+    font-weight: 600;
+    color: var(--fg-dim);
+  }
+
+  mark {
+    background: color-mix(in srgb, var(--accent) 32%, transparent);
+    color: inherit;
+    border-radius: 3px;
+    padding: 0 0.08em;
+  }
+
+  .empty {
+    text-align: center;
+    padding: 3rem 1rem;
+    color: var(--fg-dim);
+  }
+
+  .empty p { margin: 0.35rem 0; }
+  .empty .big { font-size: 1.05rem; color: var(--fg); }
+
+  /* ---------- footer ---------- */
+
+  footer {
+    margin-top: 2rem;
+    border-top: 1px solid var(--line-soft);
+    padding-top: 1rem;
+    font-size: 0.82rem;
+    color: var(--fg-faint);
+  }
+
+  footer summary {
+    cursor: pointer;
+    color: var(--fg-dim);
+    font-weight: 600;
+    margin-bottom: 0.6rem;
+  }
+
+  footer .legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    margin: 0.6rem 0 0.9rem;
+  }
+
+  footer .legend span {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+  }
+
+  footer .legend i {
+    width: 0.8rem;
+    height: 0.8rem;
+    border-radius: 3px;
+    background: var(--cat);
+  }
+
+  footer p { margin: 0.4rem 0; max-width: 62ch; }
+  footer a { color: var(--accent); }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="wrap">
+    <div class="title">
+      <h1><span class="dc">DEF CON 34</span> · Room Finder</h1>
+      <span class="sub" id="total"></span>
+    </div>
+
+    <div class="searchbox">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+        <circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/>
+      </svg>
+      <input id="q" type="search" enterkeyhint="search" autocomplete="off"
+             autocapitalize="off" autocorrect="off" spellcheck="false"
+             placeholder="Search a room number, name, or type…"
+             aria-label="Search rooms, names, and types">
+      <button id="clear" type="button" aria-label="Clear search">×</button>
+    </div>
+
+    <div class="filters" id="typeFilters" role="group" aria-label="Filter by type"></div>
+    <div class="filters" id="floorFilters" role="group" aria-label="Filter by floor"></div>
+  </div>
+</header>
+
+<main class="wrap">
+  <div class="status">
+    <span id="count" role="status" aria-live="polite"></span>
+    <span class="hint"><kbd>/</kbd> to search · <kbd>Esc</kbd> to clear</span>
+  </div>
+  <ul id="results"></ul>
+  <div class="empty" id="empty" hidden>
+    <p class="big">No rooms match that.</p>
+    <p>Try a room number (<code>1216</code>), part of a name (<code>lock pick</code>), or a type (<code>village</code>).</p>
+  </div>
+
+  <footer>
+    <details>
+      <summary>About this data</summary>
+      <div class="legend" id="legend"></div>
+      <p>Extracted from <code>DC34_room_number_to_room_name_list_withlines.pdf</code>. Names,
+         spellings, and floors are reproduced exactly as they appear in that document —
+         including its typos, so search is typo-tolerant in both directions.</p>
+      <p>A room can host more than one thing, and one village can span several rooms;
+         both are called out on the cards. <em>Unlisted</em> means the source has
+         <code>?</code> for that entry.</p>
+      <p>Unofficial. Rooms change — confirm against the official DEF CON program on site.</p>
+    </details>
+  </footer>
+</main>
+
+<script id="room-data" type="application/json">
+[{"id":1,"room":"100","floor":"1","name":"Contest Stage","type":"Contest"},{"id":2,"room":"101","floor":"1","name":"5N4CK3Y","type":"Contest"},{"id":3,"room":"102","floor":"1","name":"DC's Next Top Threat Model","type":"Contest"},{"id":4,"room":"103","floor":"1","name":"Tinfoil Hat Contest","type":"Contest"},{"id":5,"room":"103","floor":"1","name":"Untechnical","type":"Contest"},{"id":6,"room":"104","floor":"1","name":"DEF CON Scavenger Hunt","type":"Contest"},{"id":7,"room":"105","floor":"1","name":"Darknet-NG","type":"Contest"},{"id":8,"room":"106","floor":"1","name":"Crack Me If You Can","type":"Contest"},{"id":9,"room":"107","floor":"1","name":"Tele-Challenge","type":"Contest"},{"id":10,"room":"108","floor":"1","name":"Hackfortress","type":"Contest"},{"id":11,"room":"109","floor":"1","name":"?Cube","type":"Contest"},{"id":12,"room":"110","floor":"1","name":"Hacking GRC","type":"Contest"},{"id":13,"room":"111","floor":"1","name":"IOT Village CTF","type":"Contest"},{"id":14,"room":"112","floor":"1","name":"Ham Radio Fox Hunt & Can it Ham?","type":"Contest"},{"id":15,"room":"200","floor":"1","name":"$unl1ght Sh4dow5","type":"Contest"},{"id":16,"room":"201","floor":"1","name":"Creator Stage 1","type":"Stage/Workshop"},{"id":17,"room":"201","floor":"1","name":"Octopus Game","type":"Contest"},{"id":18,"room":"202","floor":"1","name":"Beer Chilling Contraption Contest","type":"Contest"},{"id":19,"room":"203","floor":"1","name":"Cyrptic Hunt","type":"Contest"},{"id":20,"room":"204","floor":"1","name":"Contest Ops","type":"Goon"},{"id":21,"room":"205","floor":"1","name":"Hspace: AI Battlegrounds","type":"Contest"},{"id":22,"room":"206","floor":"1","name":"Spyvspy 3: Rat Race","type":"Contest"},{"id":23,"room":"207","floor":"1","name":"Hacker Games","type":"Contest"},{"id":24,"room":"208","floor":"1","name":"Scambait","type":"Village"},{"id":25,"room":"209","floor":"1","name":"Badgelife Village","type":"Village"},{"id":26,"room":"210","floor":"1","name":"Kubernetes CTF","type":"Contest"},{"id":27,"room":"210","floor":"1","name":"Phreakme","type":"Contest"},{"id":28,"room":"211","floor":"1","name":"Game Hacking Village","type":"Village"},{"id":29,"room":"213","floor":"1","name":"Hac-Man (Rogue Signal)","type":"Contest"},{"id":30,"room":"214","floor":"1","name":"Crack the Core","type":"Contest"},{"id":31,"room":"215","floor":"1","name":"IOT Village","type":"Village"},{"id":32,"room":"300","floor":"1","name":"Hardhat Brigade","type":"Community"},{"id":33,"room":"301","floor":"1","name":"Makers Village","type":"Village"},{"id":34,"room":"302","floor":"1","name":"Hack3r Runw@y","type":"Contest"},{"id":35,"room":"303","floor":"1","name":"Bug Bounty Village CTF","type":"Contest"},{"id":36,"room":"304","floor":"1","name":"Pinball High Score Contest","type":"Contest"},{"id":37,"room":"305","floor":"1","name":"Village Ops","type":"Goon"},{"id":38,"room":"306","floor":"1","name":"Biohacking Village CTF","type":"Contest"},{"id":39,"room":"307","floor":"1","name":"DDOS Contest","type":"Contest"},{"id":40,"room":"308","floor":"1","name":"Real17y Overrun","type":"Contest"},{"id":41,"room":"309","floor":"1","name":"Red Team Village","type":"Village"},{"id":42,"room":"400","floor":"1","name":"Hardware Hacking & Solder Skills","type":"Village"},{"id":43,"room":"401","floor":"1","name":"Cyrpto & Privacy Village","type":"Village"},{"id":44,"room":"402","floor":"1","name":"The Gold Bug","type":"Contest"},{"id":45,"room":"404","floor":"1","name":"Crash and Compile","type":"Contest"},{"id":46,"room":"405","floor":"1","name":"CMD+CTRL Cyber Range","type":"Contest"},{"id":47,"room":"406","floor":"1","name":"Tamper Evident","type":"Village"},{"id":48,"room":"407","floor":"1","name":"Lock Pick Village","type":"Village"},{"id":49,"room":"408","floor":"1","name":"Biohacking Village","type":"Village"},{"id":50,"room":"409","floor":"1","name":"Radio Frequency Village","type":"Village"},{"id":51,"room":"500","floor":"1","name":"DEF CON CTF","type":"Contest"},{"id":52,"room":"501","floor":"1","name":"Recon Village","type":"Village"},{"id":53,"room":"502","floor":"1","name":"ICS Village","type":"Village"},{"id":54,"room":"503","floor":"1","name":"Embedded Systems Village","type":"Village"},{"id":55,"room":"504","floor":"1","name":"Defacement Ops","type":"Goon"},{"id":56,"room":"600","floor":"1","name":"Malware Village","type":"Village"},{"id":57,"room":"601","floor":"1","name":"Physical Security Village","type":"Village"},{"id":58,"room":"602","floor":"1","name":"Adversary Village","type":"Village"},{"id":59,"room":"603","floor":"1","name":"AI Village","type":"Village"},{"id":60,"room":"604","floor":"1","name":"Appsec Village","type":"Village"},{"id":61,"room":"605","floor":"1","name":"Quantum Village","type":"Village"},{"id":62,"room":"700","floor":"1","name":"Aerospace Village","type":"Village"},{"id":63,"room":"701","floor":"1","name":"Car Hacking Village","type":"Village"},{"id":64,"room":"702","floor":"1","name":"Cyrpto-Currency Village","type":"Village"},{"id":65,"room":"703","floor":"1","name":"Maritime Hacking Village","type":"Village"},{"id":66,"room":"801","floor":"1","name":"Creator Stage 2","type":"Stage/Workshop"},{"id":67,"room":"900","floor":"1","name":"Demo Labs 4","type":"Stage/Workshop"},{"id":68,"room":"900","floor":"1","name":"Demo Labs Ops","type":"Goon"},{"id":69,"room":"901","floor":"1","name":"Demo Labs 5","type":"Stage/Workshop"},{"id":70,"room":"902","floor":"1","name":"Demo Labs 6","type":"Stage/Workshop"},{"id":71,"room":"903","floor":"1","name":"Track 5","type":"Stage/Workshop"},{"id":72,"room":"904","floor":"1","name":"Track 4","type":"Stage/Workshop"},{"id":73,"room":"905","floor":"1","name":"?","type":"Goon"},{"id":74,"room":"906","floor":"1","name":"Track 3","type":"Stage/Workshop"},{"id":75,"room":"1001","floor":"1","name":"Demo Labs 1","type":"Stage/Workshop"},{"id":76,"room":"1002","floor":"1","name":"Demo Labs 2","type":"Stage/Workshop"},{"id":77,"room":"1003","floor":"1","name":"Demo Labs 3","type":"Stage/Workshop"},{"id":78,"room":"1004","floor":"1","name":"?","type":"Goon"},{"id":79,"room":"1005","floor":"1","name":"?","type":"Goon"},{"id":80,"room":"1006","floor":"1","name":"Track 1","type":"Stage/Workshop"},{"id":81,"room":"1007","floor":"1","name":"Track 2","type":"Stage/Workshop"},{"id":82,"room":"1100","floor":"1","name":"Creator Stage 7","type":"Stage/Workshop"},{"id":83,"room":"1101","floor":"1","name":"?","type":"Goon"},{"id":84,"room":"1102","floor":"1","name":"Creator Stage 6","type":"Stage/Workshop"},{"id":85,"room":"1103","floor":"1","name":"Creator Stage 5","type":"Stage/Workshop"},{"id":86,"room":"1200","floor":"1","name":"Hak5 LLC","type":"Vendors"},{"id":87,"room":"1201","floor":"1","name":"Phreeli Company","type":"Vendors"},{"id":88,"room":"1202","floor":"1","name":"InDiPro","type":"Vendors"},{"id":89,"room":"1203","floor":"1","name":"Electronic Cats","type":"Vendors"},{"id":90,"room":"1204","floor":"1","name":"1BitSquared LLC","type":"Vendors"},{"id":91,"room":"1205","floor":"1","name":"Cognitive Security Institute","type":"Vendors"},{"id":92,"room":"1207","floor":"1","name":"FREE_WIL, LLC","type":"Vendors"},{"id":93,"room":"1208","floor":"1","name":"LowMesh LLC","type":"Vendors"},{"id":94,"room":"1209","floor":"1","name":"Keyport, Inc.","type":"Vendors"},{"id":95,"room":"1210","floor":"1","name":"Red Team Tools","type":"Vendors"},{"id":96,"room":"1211","floor":"1","name":"Midwest Gadgets/Rabbit-Labs","type":"Vendors"},{"id":97,"room":"1212","floor":"1","name":"Hacker Warehouse","type":"Vendors"},{"id":98,"room":"1213","floor":"1","name":"?","type":"Vendors"},{"id":99,"room":"1214","floor":"1","name":"Rokland LLC","type":"Vendors"},{"id":100,"room":"1215","floor":"1","name":"Manifesto Industires LLC","type":"Vendors"},{"id":101,"room":"1216","floor":"1","name":"The Tor Project","type":"Vendors"},{"id":102,"room":"1217","floor":"1","name":"The Calyx Institute","type":"Vendors"},{"id":103,"room":"1218","floor":"1","name":"TOOOL","type":"Vendors"},{"id":104,"room":"1219","floor":"1","name":"Rogue's Roost LLC","type":"Vendors"},{"id":105,"room":"1220","floor":"1","name":"DEEPNET LLC","type":"Vendors"},{"id":106,"room":"1221","floor":"1","name":"Octopwn Kft","type":"Vendors"},{"id":107,"room":"1222","floor":"1","name":"No Starch Press Inc","type":"Vendors"},{"id":108,"room":"1223","floor":"1","name":"Geist-Projeck/Crisiswear","type":"Vendors"},{"id":109,"room":"1224","floor":"1","name":"WISP","type":"Vendors"},{"id":110,"room":"1225","floor":"1","name":"?","type":"Vendors"},{"id":111,"room":"1225","floor":"1","name":"Cryptocurrency Advocate","type":"Vendors"},{"id":112,"room":"1226","floor":"1","name":"Miscreants","type":"Vendors"},{"id":113,"room":"1227","floor":"1","name":"?","type":"Vendors"},{"id":114,"room":"1229","floor":"1","name":"?","type":"Vendors"},{"id":115,"room":"1230","floor":"1","name":"Sparrows Manufacturing Co","type":"Vendors"},{"id":116,"room":"1231","floor":"1","name":"iFixit Inc","type":"Vendors"},{"id":117,"room":"1300","floor":"1","name":"Book Signings","type":"Vendors"},{"id":118,"room":"1300","floor":"1","name":"Vendor/Community Ops","type":"Goon"},{"id":119,"room":"1301","floor":"1","name":"REKCAH Publishing","type":"Vendors"},{"id":120,"room":"1302","floor":"1","name":"Electronic Frontier Foundation(EFF)","type":"Vendors"},{"id":121,"room":"1311","floor":"1","name":"Tazmanian Freight","type":"Goon"},{"id":122,"room":"1400","floor":"1","name":"XZBT BOH","type":"Community"},{"id":123,"room":"1400","floor":"1","name":"Zynn","type":"Exhibitor"},{"id":124,"room":"1403","floor":"1","name":"?","type":"Exhibitor"},{"id":125,"room":"1404","floor":"1","name":"Capitol Technology University","type":"Exhibitor"},{"id":126,"room":"1405","floor":"1","name":"Flare.io","type":"Exhibitor"},{"id":127,"room":"1406","floor":"1","name":"Tracebit","type":"Exhibitor"},{"id":128,"room":"1407","floor":"1","name":"Pentest-Tools.com","type":"Exhibitor"},{"id":129,"room":"1408","floor":"1","name":"Promptfoo","type":"Exhibitor"},{"id":130,"room":"1409","floor":"1","name":"Horizon3","type":"Exhibitor"},{"id":131,"room":"1410","floor":"1","name":"Expel","type":"Exhibitor"},{"id":132,"room":"1411","floor":"1","name":"Sublmage Inc.","type":"Exhibitor"},{"id":133,"room":"1412","floor":"1","name":"?","type":"Exhibitor"},{"id":134,"room":"1413","floor":"1","name":"Be the Match","type":"Exhibitor"},{"id":135,"room":"1414","floor":"1","name":"Hack The Box","type":"Exhibitor"},{"id":136,"room":"1415","floor":"1","name":"OWASP","type":"Community"},{"id":137,"room":"1416","floor":"1","name":"La Villa Community","type":"Community"},{"id":138,"room":"1417","floor":"1","name":"Noob Community","type":"Community"},{"id":139,"room":"1418","floor":"1","name":".EDU Community","type":"Community"},{"id":140,"room":"1419","floor":"1","name":"Lonely Hackers Club","type":"Community"},{"id":141,"room":"1420","floor":"1","name":"Hackers Town","type":"Community"},{"id":142,"room":"1421","floor":"1","name":"Retro Tech Community","type":"Community"},{"id":143,"room":"1422","floor":"1","name":"Mobile Hacking Community","type":"Community"},{"id":144,"room":"1423","floor":"1","name":"Loong Community","type":"Community"},{"id":145,"room":"1424","floor":"1","name":"Dock Ops","type":"Goon"},{"id":146,"room":"1500","floor":"1","name":"Merch","type":"Vendors"},{"id":147,"room":"1501","floor":"1","name":"QM","type":"Goon"},{"id":148,"room":"1502","floor":"1","name":"?","type":"Goon"},{"id":149,"room":"1503","floor":"1","name":"?","type":"Goon"},{"id":150,"room":"1504","floor":"1","name":"?","type":"Goon"},{"id":151,"room":"W101","floor":"1","name":"Reg BOH","type":"Goon"},{"id":152,"room":"W102","floor":"1","name":"REG BOH","type":"Goon"},{"id":153,"room":"W106","floor":"1","name":"Illumicon Community","type":"Community"},{"id":154,"room":"W110","floor":"1","name":"A&E","type":"Goon"},{"id":155,"room":"W201","floor":"2","name":"HDA Community","type":"Community"},{"id":156,"room":"W202","floor":"2","name":"NFO Goons","type":"Goon"},{"id":157,"room":"W203","floor":"2","name":"Data Duplication Village","type":"Village"},{"id":158,"room":"W204","floor":"2","name":"Payment Village","type":"Village"},{"id":159,"room":"W205","floor":"2","name":"Payment Village","type":"Village"},{"id":160,"room":"W206","floor":"2","name":"Bug Bounty Village","type":"Village"},{"id":161,"room":"W207","floor":"2","name":"Bug Bounty Village","type":"Village"},{"id":162,"room":"W208","floor":"2","name":"TDI/MHH Quiet Room","type":"Community"},{"id":163,"room":"W209","floor":"2","name":"The Diana Initiative","type":"Community"},{"id":164,"room":"W210","floor":"2","name":"Policy Village","type":"Village"},{"id":165,"room":"W211","floor":"2","name":"Policy Village","type":"Village"},{"id":166,"room":"W212","floor":"2","name":"Press/Policy Quiet Room","type":"Goon"},{"id":167,"room":"W213","floor":"2","name":"Blue Team Village","type":"Village"},{"id":168,"room":"W214","floor":"2","name":"Blue Team Village","type":"Village"},{"id":169,"room":"W215","floor":"2","name":"Blue Team Village","type":"Village"},{"id":170,"room":"W216","floor":"2","name":"Blue Team Village","type":"Village"},{"id":171,"room":"W217","floor":"2","name":"Blue Team Village","type":"Village"},{"id":172,"room":"W218","floor":"2","name":"Call Center Village","type":"Village"},{"id":173,"room":"W219","floor":"2","name":"Voting Village","type":"Village"},{"id":174,"room":"W220","floor":"2","name":"Voting VIllage","type":"Village"},{"id":175,"room":"W221","floor":"2","name":"Training","type":"Stage/Workshop"},{"id":176,"room":"W222","floor":"2","name":"Workshop","type":"Stage/Workshop"},{"id":177,"room":"W223","floor":"2","name":"Inhuman Training","type":"Stage/Workshop"},{"id":178,"room":"W224","floor":"2","name":"Training","type":"Stage/Workshop"},{"id":179,"room":"W225","floor":"2","name":"Training","type":"Stage/Workshop"},{"id":180,"room":"W226","floor":"2","name":"Speaker Ops","type":"Goon"},{"id":181,"room":"W227","floor":"2","name":"Speaker Ops","type":"Goon"},{"id":182,"room":"W228","floor":"2","name":"Workshop","type":"Stage/Workshop"},{"id":183,"room":"W229","floor":"2","name":"Workshop","type":"Stage/Workshop"},{"id":184,"room":"W230","floor":"2","name":"Workshop","type":"Stage/Workshop"},{"id":185,"room":"W231","floor":"2","name":"Workshop","type":"Stage/Workshop"},{"id":186,"room":"W232","floor":"2","name":"Workshop","type":"Stage/Workshop"},{"id":187,"room":"W233","floor":"2","name":"Workshop","type":"Stage/Workshop"},{"id":188,"room":"W234","floor":"2","name":"Dispatch, Lost & Found","type":"Goon"},{"id":189,"room":"W235","floor":"2","name":"NOC","type":"Goon"},{"id":190,"room":"W236","floor":"2","name":"DCTV/TSOK","type":"Goon"},{"id":191,"room":"W237","floor":"2","name":"Broadcast & Media","type":"Goon"},{"id":192,"room":"W238","floor":"2","name":"DEF CON Groups","type":"Community"},{"id":193,"room":"W239","floor":"2","name":"SOC Ops","type":"Goon"},{"id":194,"room":"W240","floor":"2","name":"SOC Loud Room","type":"Goon"},{"id":195,"room":"W301","floor":"3","name":"Friends of Bill W","type":"Community"},{"id":196,"room":"W302","floor":"3","name":"Memorial","type":"Community"},{"id":197,"room":"W303","floor":"3","name":"Packet Hacking Village","type":"Village"},{"id":198,"room":"W311","floor":"3","name":"Cloud Village","type":"Village"},{"id":199,"room":"W312","floor":"3","name":"Cloud Village","type":"Village"},{"id":200,"room":"W313","floor":"3","name":"Cloud Village","type":"Village"},{"id":201,"room":"W314","floor":"3","name":"Ham Exams","type":"Village"},{"id":202,"room":"W315","floor":"3","name":"Ham Radio Viliage","type":"Village"},{"id":203,"room":"W316","floor":"3","name":"DC NextGen","type":"Community"},{"id":204,"room":"W317","floor":"3","name":"Social Engineering Community","type":"Village"},{"id":205,"room":"W318","floor":"3","name":"Social Engineering Community","type":"Village"},{"id":206,"room":"W319","floor":"3","name":"Social Engineering Community","type":"Village"},{"id":207,"room":"W320","floor":"3","name":"Social Engineering Workshop","type":"Village"},{"id":208,"room":"W321","floor":"3","name":"Telecom Village","type":"Village"},{"id":209,"room":"W322","floor":"3","name":"Blacks in Cyber Village","type":"Village"},{"id":210,"room":"W323","floor":"3","name":"Blacks in Cyber Village","type":"Village"},{"id":211,"room":"W324","floor":"3","name":"Blacks in Cyber Village","type":"Village"},{"id":212,"room":"W325","floor":"3","name":"QueerCon Community Lounge","type":"Community"},{"id":213,"room":"W326","floor":"3","name":"VetCon","type":"Community"},{"id":214,"room":"W327","floor":"3","name":"Meetup Location","type":"Community"},{"id":215,"room":"?","floor":"1","name":"Chillout Lounge (Floor 1)","type":"Community"}]
+</script>
+
+<script>
+(() => {
+  "use strict";
+
+  const DATA = JSON.parse(document.getElementById("room-data").textContent);
+
+  const TYPES = {
+    "Contest":        { var: "--c-contest",   cls: "contest" },
+    "Village":        { var: "--c-village",   cls: "village" },
+    "Stage/Workshop": { var: "--c-stage",     cls: "stage" },
+    "Vendors":        { var: "--c-vendors",   cls: "vendors" },
+    "Exhibitor":      { var: "--c-exhibitor", cls: "exhibitor" },
+    "Community":      { var: "--c-community", cls: "community" },
+    "Goon":           { var: "--c-goon",      cls: "goon" },
+  };
+
+  // Well-known DEF CON shorthand. Matched against the normalized name, so a
+  // typo in the source name doesn't break the alias.
+  const ALIASES = [
+    ["blue team",              "btv"],
+    ["packet hacking",         "phv"],
+    ["radio frequency",        "rfv rf"],
+    ["hardware hacking",       "hhv"],
+    ["solder skills",          "hhv soldering"],
+    ["social engineering",     "se sev social eng"],
+    ["cyrpto privacy",         "cpv crypto privacy"],
+    ["cyrpto currency",        "cryptocurrency crypto"],
+    ["car hacking",            "chv"],
+    ["lock pick",              "lpv lockpick lockpicking"],
+    ["iot",                    "internet of things"],
+    ["ics",                    "industrial control systems"],
+    ["biohacking",             "bhv"],
+    ["data duplication",       "ddv"],
+    ["red team village",       "rtv"],
+    ["aerospace",              "asv"],
+    ["appsec",                 "application security"],
+    ["embedded systems",       "esv"],
+    ["physical security",      "psv"],
+    ["the diana initiative",   "tdi"],
+    ["electronic frontier",    "eff"],
+    ["adversary",              "adv"],
+    ["ham radio",              "amateur radio"],
+    ["quiet room",             "quiet"],
+    ["lost & found",           "lost and found"],
+  ];
+
+  const norm = s => s.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+
+  /* ---------- index ---------- */
+
+  const byRoom = new Map();
+  const byName = new Map();
+
+  for (const e of DATA) {
+    e.nName = norm(e.name);
+    e.nRoom = norm(e.room);
+    e.nType = norm(e.type);
+    e.unlisted = e.name === "?";
+
+    let extra = "";
+    for (const [needle, terms] of ALIASES) {
+      if (e.nName.includes(needle)) extra += " " + terms;
+    }
+    // Tokens used for whole-word and fuzzy matching.
+    e.tokens = (e.nRoom + " " + e.nName + " " + e.nType + " floor " + e.floor + extra).split(" ").filter(Boolean);
+    e.haystack = e.tokens.join(" ");
+
+    if (!byRoom.has(e.room)) byRoom.set(e.room, []);
+    byRoom.get(e.room).push(e);
+
+    if (!e.unlisted) {
+      if (!byName.has(e.nName)) byName.set(e.nName, []);
+      byName.get(e.nName).push(e);
+    }
+  }
+
+  // Cross-references: other things in the same room, same thing in other rooms.
+  for (const e of DATA) {
+    e.roommates = (byRoom.get(e.room) || []).filter(o => o !== e);
+    e.alsoAt = e.unlisted ? [] : (byName.get(e.nName) || []).filter(o => o.room !== e.room);
+  }
+
+  /* ---------- fuzzy matching ---------- */
+
+  // Damerau-Levenshtein, bounded — enough to absorb the source's typos
+  // ("Cyrpto"/"crypto", "Viliage"/"village") and the user's.
+  function editDistance(a, b, max) {
+    if (a === b) return 0;
+    if (Math.abs(a.length - b.length) > max) return max + 1;
+    let prev2 = [], prev = [], cur = [];
+    for (let j = 0; j <= b.length; j++) prev[j] = j;
+    for (let i = 1; i <= a.length; i++) {
+      cur = [i];
+      let best = i;
+      for (let j = 1; j <= b.length; j++) {
+        const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+        let v = Math.min(cur[j - 1] + 1, prev[j] + 1, prev[j - 1] + cost);
+        if (i > 1 && j > 1 && a[i - 1] === b[j - 2] && a[i - 2] === b[j - 1]) {
+          v = Math.min(v, prev2[j - 2] + 1);
+        }
+        cur[j] = v;
+        if (v < best) best = v;
+      }
+      if (best > max) return max + 1;
+      prev2 = prev; prev = cur;
+    }
+    return prev[b.length];
+  }
+
+  // Never fuzz a token containing a digit: 1216 and 1210 are different rooms,
+  // whereas "viliage" and "village" are the same word.
+  const fuzzBudget = t => {
+    if (/\d/.test(t)) return 0;
+    return t.length >= 7 ? 2 : t.length >= 3 ? 1 : 0;
+  };
+
+  // Score one query token against one entry. 0 means "no match at all".
+  function tokenScore(e, t, fuzzy) {
+    if (e.nRoom === t) return 1000;
+    if (e.nRoom.startsWith(t) && t.length >= 2) return 600;
+    if (e.nType === t) return 300;
+
+    if (e.nName === t) return 900;
+    if (e.nName.startsWith(t)) return 500;
+
+    let best = 0;
+    for (const tok of e.tokens) {
+      if (tok === t) { best = Math.max(best, 400); continue; }
+      if (tok.startsWith(t)) { best = Math.max(best, 320 - (tok.length - t.length)); continue; }
+      if (tok.includes(t) && t.length >= 3) { best = Math.max(best, 200); continue; }
+    }
+    if (best) return best;
+
+    if (e.haystack.includes(t)) return 150;
+    if (!fuzzy) return 0;
+
+    const budget = fuzzBudget(t);
+    if (budget) {
+      for (const tok of e.tokens) {
+        if (Math.abs(tok.length - t.length) > budget) continue;
+        const d = editDistance(t, tok, budget);
+        if (d <= budget) best = Math.max(best, 120 - d * 30);
+      }
+    }
+    return best;
+  }
+
+  function pass(tokens, query, types, floors, fuzzy) {
+    const out = [];
+
+    for (const e of DATA) {
+      if (types.size && !types.has(e.type)) continue;
+      if (floors.size && !floors.has(e.floor)) continue;
+
+      let score = 0, ok = true;
+      for (const t of tokens) {
+        const s = tokenScore(e, t, fuzzy);
+        if (!s) { ok = false; break; }
+        score += s;
+      }
+      if (!ok) continue;
+      if (tokens.length > 1 && e.haystack.includes(norm(query))) score += 250;
+      out.push({ e, score });
+    }
+
+    // Score first when searching; room order when browsing or tied.
+    out.sort((a, b) => b.score - a.score || a.e.id - b.e.id);
+    return out.map(r => r.e);
+  }
+
+  // Strict first, so a well-spelled query stays precise. Only fall back to
+  // typo-tolerant matching when strict finds nothing.
+  function search(query, types, floors) {
+    const tokens = norm(query).split(" ").filter(Boolean);
+    const strict = pass(tokens, query, types, floors, false);
+    if (strict.length || !tokens.length) return { hits: strict, fuzzy: false };
+    return { hits: pass(tokens, query, types, floors, true), fuzzy: true };
+  }
+
+  /* ---------- rendering ---------- */
+
+  const esc = s => s.replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+  function highlight(text, tokens) {
+    let html = esc(text);
+    if (!tokens.length) return html;
+    const pattern = tokens
+      .filter(t => t.length >= 2)
+      .map(t => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
+      .sort((a, b) => b.length - a.length)
+      .join("|");
+    if (!pattern) return html;
+    return html.replace(new RegExp(`(${pattern})(?![^<]*>)`, "gi"), "<mark>$1</mark>");
+  }
+
+  const resultsEl = document.getElementById("results");
+  const emptyEl = document.getElementById("empty");
+  const countEl = document.getElementById("count");
+  const qEl = document.getElementById("q");
+  const clearEl = document.getElementById("clear");
+
+  function card(e, tokens) {
+    const t = TYPES[e.type] || { var: "--line", cls: "" };
+    const li = document.createElement("li");
+    li.className = "card";
+    li.style.setProperty("--cat", `var(${t.var})`);
+
+    const notes = [];
+    if (e.roommates.length) {
+      notes.push("Also in this room: " + e.roommates
+        .map(o => esc(o.unlisted ? "unlisted" : o.name)).join(", "));
+    }
+    if (e.alsoAt.length) {
+      notes.push("Also at <b>" + [...new Set(e.alsoAt.map(o => esc(o.room)))].join("</b>, <b>") + "</b>");
+    }
+
+    li.innerHTML = `
+      <div class="room">
+        <span class="num">${highlight(e.room, tokens)}</span>
+        <span class="fl">Floor ${esc(e.floor)}</span>
+      </div>
+      <div class="body">
+        <div class="name${e.unlisted ? " unlisted" : ""}">${
+          e.unlisted ? "Unlisted" : highlight(e.name, tokens)
+        }</div>
+        <div class="meta">
+          <span class="badge ${t.cls}">${esc(e.type)}</span>
+        </div>
+        ${notes.length ? `<div class="also">${notes.join("<br>")}</div>` : ""}
+      </div>`;
+    return li;
+  }
+
+  /* ---------- filters ---------- */
+
+  const activeTypes = new Set();
+  const activeFloors = new Set();
+
+  function chip(label, count, opts = {}) {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "chip" + (opts.cls ? " " + opts.cls : "");
+    b.setAttribute("aria-pressed", "false");
+    if (opts.color) b.style.setProperty("--chip-color", `var(${opts.color})`);
+    b.innerHTML =
+      (opts.color ? `<span class="dot"></span>` : "") +
+      esc(label) +
+      (count != null ? ` <span class="n">${count}</span>` : "");
+    return b;
+  }
+
+  function buildFilters() {
+    const typeWrap = document.getElementById("typeFilters");
+    const floorWrap = document.getElementById("floorFilters");
+
+    const tLabel = document.createElement("span");
+    tLabel.className = "flabel";
+    tLabel.textContent = "Type";
+    typeWrap.append(tLabel);
+
+    for (const [name, meta] of Object.entries(TYPES)) {
+      const n = DATA.filter(e => e.type === name).length;
+      if (!n) continue;
+      const b = chip(name, n, { color: meta.var, cls: meta.cls });
+      b.addEventListener("click", () => {
+        toggle(activeTypes, name, b);
+        render();
+      });
+      typeWrap.append(b);
+    }
+
+    const fLabel = document.createElement("span");
+    fLabel.className = "flabel";
+    fLabel.textContent = "Floor";
+    floorWrap.append(fLabel);
+
+    for (const f of [...new Set(DATA.map(e => e.floor))].sort()) {
+      const n = DATA.filter(e => e.floor === f).length;
+      const b = chip("Floor " + f, n);
+      b.addEventListener("click", () => {
+        toggle(activeFloors, f, b);
+        render();
+      });
+      floorWrap.append(b);
+    }
+  }
+
+  function toggle(set, value, btn) {
+    if (set.has(value)) { set.delete(value); btn.setAttribute("aria-pressed", "false"); }
+    else { set.add(value); btn.setAttribute("aria-pressed", "true"); }
+  }
+
+  /* ---------- main render ---------- */
+
+  function render() {
+    const query = qEl.value.trim();
+    const tokens = norm(query).split(" ").filter(Boolean);
+    const { hits, fuzzy } = search(query, activeTypes, activeFloors);
+
+    clearEl.classList.toggle("on", query.length > 0);
+
+    const frag = document.createDocumentFragment();
+    for (const e of hits) frag.append(card(e, tokens));
+    resultsEl.replaceChildren(frag);
+
+    emptyEl.hidden = hits.length > 0;
+
+    const filtered = activeTypes.size || activeFloors.size || query;
+    countEl.textContent = !filtered
+      ? `${DATA.length} entries · ${byRoom.size} rooms`
+      : !hits.length
+        ? "No matches"
+        : fuzzy
+          ? `No exact match — ${hits.length} close ${hits.length === 1 ? "match" : "matches"}`
+          : `${hits.length} of ${DATA.length} entries`;
+
+    const hash = query ? "#q=" + encodeURIComponent(query) : "";
+    if (hash !== location.hash) history.replaceState(null, "", hash || location.pathname);
+  }
+
+  /* ---------- wiring ---------- */
+
+  document.getElementById("total").textContent =
+    `${byRoom.size} rooms · ${DATA.length} entries`;
+
+  const legend = document.getElementById("legend");
+  for (const [name, meta] of Object.entries(TYPES)) {
+    const s = document.createElement("span");
+    s.style.setProperty("--cat", `var(${meta.var})`);
+    s.innerHTML = `<i></i>${esc(name)}`;
+    legend.append(s);
+  }
+
+  buildFilters();
+
+  qEl.addEventListener("input", render);
+
+  clearEl.addEventListener("click", () => {
+    qEl.value = "";
+    qEl.focus();
+    render();
+  });
+
+  document.addEventListener("keydown", ev => {
+    if (ev.key === "/" && document.activeElement !== qEl) {
+      ev.preventDefault();
+      qEl.focus();
+      qEl.select();
+    } else if (ev.key === "Escape" && document.activeElement === qEl) {
+      qEl.value = "";
+      render();
+    }
+  });
+
+  const fromHash = decodeURIComponent((location.hash.match(/^#q=(.*)$/) || [])[1] || "");
+  if (fromHash) qEl.value = fromHash;
+
+  render();
+  if (matchMedia("(min-width: 768px)").matches) qEl.focus();
+})();
+</script>
+</body>
+</html>
